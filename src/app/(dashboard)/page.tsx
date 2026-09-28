@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import { useApp } from "@/context/AppContext";
+import { analyticsApi } from "@/utils/api";
 import { 
   Heart, 
   CreditCard, 
@@ -10,11 +11,41 @@ import {
   ArrowUpRight, 
   CircleDollarSign,
   UserCheck,
-  Zap
+  Zap,
+  TrendingUp,
+  Package
 } from "lucide-react";
+import Link from "next/link";
 
 export default function OverviewPage() {
-  const { transactions } = useApp();
+  const { transactions, apiConnected } = useApp();
+  const [backendOverview, setBackendOverview] = useState<{
+    totalSupport: number;
+    totalCount: number;
+    currentMonthSupport: number;
+    averageSupport: number;
+  } | null>(null);
+
+  const [backendProductStats, setBackendProductStats] = useState<Array<{
+    productId: string;
+    label: string;
+    count: number;
+    sum: number;
+  }> | null>(null);
+
+  useEffect(() => {
+    analyticsApi.getOverview().then(res => {
+      if (res.success && res.data) {
+        setBackendOverview(res.data);
+      }
+    }).catch(() => {});
+
+    analyticsApi.getProductStats().then(res => {
+      if (res.success && res.data) {
+        setBackendProductStats(res.data);
+      }
+    }).catch(() => {});
+  }, [transactions]);
 
   // Format currency to IDR (e.g., Rp25.450.000)
   const formatIDR = (num: number) => {
@@ -26,18 +57,21 @@ export default function OverviewPage() {
     }).format(num);
   };
 
-  // Compute metrics from the active transactions dataset
-  const metrics = useMemo(() => {
+  // Compute fallback metrics from the active transactions dataset
+  const localMetrics = useMemo(() => {
     const successTransactions = transactions.filter(tx => tx.status === "Success");
     
     const totalSupport = successTransactions.reduce((acc, curr) => acc + curr.amount, 0);
     const totalCount = successTransactions.length;
     
-    // July 2026 is month = 6 in JS (July)
+    const now = new Date();
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
+
     const currentMonthSupport = successTransactions
       .filter(tx => {
         const date = new Date(tx.createdAt);
-        return date.getMonth() === 6 && date.getFullYear() === 2026;
+        return date.getMonth() === currentMonth && date.getFullYear() === currentYear;
       })
       .reduce((acc, curr) => acc + curr.amount, 0);
       
@@ -51,39 +85,44 @@ export default function OverviewPage() {
     };
   }, [transactions]);
 
+  const metrics = backendOverview || localMetrics;
+
   // Product breakdown calculation
   const productStats = useMemo(() => {
+    if (backendProductStats && backendProductStats.length > 0) {
+      return backendProductStats;
+    }
+
     const successTransactions = transactions.filter(tx => tx.status === "Success");
-    const counts = {
-      support_10000: { count: 0, sum: 0, label: "Rp10.000 (Kopi)" },
-      support_25000: { count: 0, sum: 0, label: "Rp25.000 (Camilan)" },
-      support_50000: { count: 0, sum: 0, label: "Rp50.000 (Makan Siang)" },
-      support_100000: { count: 0, sum: 0, label: "Rp100.000 (Premium)" }
+    const counts: Record<string, { count: number; sum: number; label: string }> = {
+      terragis_sub_monthly: { count: 0, sum: 0, label: "Paket Perbulan" },
+      terragis_sub_yearly: { count: 0, sum: 0, label: "Paket Pertahun" },
+      terragis_sub_lifetime: { count: 0, sum: 0, label: "Paket Selamanya" },
+      terragis_sub_group: { count: 0, sum: 0, label: "Paket Bersama (Team)" },
     };
 
     successTransactions.forEach(tx => {
-      if (tx.productId in counts) {
-        const key = tx.productId as keyof typeof counts;
-        counts[key].count++;
-        counts[key].sum += tx.amount;
+      const pid = tx.productId || "terragis_sub_monthly";
+      if (!counts[pid]) {
+        counts[pid] = { count: 0, sum: 0, label: tx.name || pid };
       }
+      counts[pid].count++;
+      counts[pid].sum += tx.amount;
     });
 
     return Object.values(counts);
-  }, [transactions]);
+  }, [backendProductStats, transactions]);
 
   // Get latest 5 successful transactions
   const recentActivities = useMemo(() => {
-    return transactions
-      .filter(tx => tx.status === "Success")
-      .slice(0, 5);
+    return transactions.slice(0, 5);
   }, [transactions]);
 
   const kpiCards = [
     {
-      title: "TOTAL DUKUNGAN",
+      title: "TOTAL PENDAPATAN",
       value: formatIDR(metrics.totalSupport),
-      subtext: "Akumulasi seluruh dana masuk",
+      subtext: "Akumulasi seluruh transaksi langganan",
       icon: Heart,
       color: "from-emerald-500 to-teal-400",
       glow: "rgba(16,185,129,0.15)"
@@ -97,17 +136,17 @@ export default function OverviewPage() {
       glow: "rgba(59,130,246,0.15)"
     },
     {
-      title: "DUKUNGAN BULAN INI",
+      title: "PENDAPATAN BULAN INI",
       value: formatIDR(metrics.currentMonthSupport),
-      subtext: "Akumulasi bulan berjalan 2026",
+      subtext: "Akumulasi bulan berjalan",
       icon: Calendar,
       color: "from-violet-500 to-fuchsia-400",
       glow: "rgba(139,92,246,0.15)"
     },
     {
-      title: "RATA-RATA DUKUNGAN",
+      title: "RATA-RATA TRANSAKSI",
       value: formatIDR(metrics.averageSupport),
-      subtext: "Per transaksi sukses",
+      subtext: "Per pembayaran langganan sukses",
       icon: Percent,
       color: "from-amber-500 to-orange-400",
       glow: "rgba(245,158,11,0.15)"
@@ -123,12 +162,12 @@ export default function OverviewPage() {
             Selamat Datang di Terra GIS Console
           </h1>
           <p className="text-sm text-zinc-500 mt-1">
-            Pantau arus dana dukungan, aktivitas pengguna, dan statistik performa produk billing Google Play secara real-time.
+            Pantau arus pendapatan langganan, log transaksi, status pengguna, dan katalog paket billing secara real-time.
           </p>
         </div>
         <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-zinc-150/70 border border-zinc-200 text-xs text-zinc-650 font-semibold select-none shadow-sm">
-          <Zap className="w-3.5 h-3.5 text-emerald-500" />
-          <span>Sesi Live Terhubung</span>
+          <Zap className={`w-3.5 h-3.5 ${apiConnected ? "text-emerald-500" : "text-amber-500"}`} />
+          <span>{apiConnected ? "Koneksi Server : Terhubung" : "Koneksi Server : Terputus"}</span>
         </div>
       </div>
 
@@ -139,7 +178,7 @@ export default function OverviewPage() {
           return (
             <div 
               key={idx}
-              className="glass-panel-light p-6 rounded-2xl relative group overflow-hidden transition-all duration-300 hover:scale-[1.02] hover:border-zinc-300"
+              className="glass-panel-light p-6 rounded-2xl relative group overflow-hidden transition-all duration-300 hover:scale-[1.02] hover:border-zinc-300 bg-white border border-zinc-200"
               style={{ boxShadow: `0 10px 30px -10px ${card.glow}` }}
             >
               <div className="flex justify-between items-start mb-4">
@@ -169,17 +208,20 @@ export default function OverviewPage() {
       {/* Analytics Summaries Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
         {/* Left: Product Performance Breakdown (3 columns) */}
-        <div className="glass-panel-light p-6 rounded-2xl lg:col-span-3 space-y-6 flex flex-col justify-between shadow-sm">
+        <div className="glass-panel-light p-6 rounded-2xl lg:col-span-3 space-y-6 flex flex-col justify-between shadow-sm bg-white border border-zinc-200">
           <div>
             <div className="flex justify-between items-center mb-1">
-              <h2 className="text-base font-bold text-zinc-800 tracking-tight">Statistik Produk Dukungan</h2>
+              <h2 className="text-base font-bold text-zinc-800 tracking-tight flex items-center gap-2">
+                <Package className="w-4 h-4 text-emerald-600" />
+                Statistik Paket Langganan
+              </h2>
               <span className="text-xs text-emerald-600 font-semibold flex items-center gap-1">
                 <CircleDollarSign className="w-3.5 h-3.5" />
-                Billing Google Play
+                Billing Real-Time
               </span>
             </div>
             <p className="text-xs text-zinc-500 mb-6">
-              Rincian nominal dukungan yang dibeli oleh pengguna Terra GIS.
+              Rincian nominal langganan yang dibeli oleh pengguna Terra GIS.
             </p>
 
             <div className="space-y-4">
@@ -189,22 +231,28 @@ export default function OverviewPage() {
                   ? Math.round((totalIncome / metrics.totalSupport) * 100) 
                   : 0;
 
-                const barColor = idx === 0 ? "bg-emerald-500" :
-                                 idx === 1 ? "bg-blue-500" :
-                                 idx === 2 ? "bg-violet-500" : "bg-amber-500";
+                const barColors = [
+                  "bg-emerald-500",
+                  "bg-blue-500",
+                  "bg-violet-500",
+                  "bg-amber-500",
+                  "bg-teal-500"
+                ];
+                const barColor = barColors[idx % barColors.length];
+
                 return (
                   <div key={idx} className="space-y-2">
                     <div className="flex justify-between text-xs font-semibold">
-                      <span className="text-zinc-600">{prod.label}</span>
+                      <span className="text-zinc-700">{prod.label}</span>
                       <div className="space-x-3 text-zinc-500">
-                        <span>{prod.count} Kali</span>
-                        <span className="text-zinc-850 font-bold">{formatIDR(totalIncome)}</span>
+                        <span>{prod.count} Transaksi</span>
+                        <span className="text-zinc-900 font-bold">{formatIDR(totalIncome)}</span>
                       </div>
                     </div>
-                    <div className="h-2 w-full bg-zinc-200 rounded-full overflow-hidden flex">
+                    <div className="h-2 w-full bg-zinc-100 rounded-full overflow-hidden flex">
                       <div 
                         className={`h-full rounded-full transition-all duration-1000 ${barColor}`} 
-                        style={{ width: `${percentage}%` }}
+                        style={{ width: `${Math.max(percentage, 3)}%` }}
                       />
                     </div>
                     <div className="flex justify-end">
@@ -215,55 +263,46 @@ export default function OverviewPage() {
               })}
             </div>
           </div>
+
+          <div className="pt-4 border-t border-zinc-150 flex justify-between items-center text-xs">
+            <span className="text-zinc-400">Kelola rincian harga dan durasi trial</span>
+            <Link href="/produk" className="text-emerald-600 font-bold hover:underline flex items-center gap-1">
+              Katalog Produk <ArrowUpRight className="w-3.5 h-3.5" />
+            </Link>
+          </div>
         </div>
 
         {/* Right: Recent Activity Feed (2 columns) */}
-        <div className="glass-panel-light p-6 rounded-2xl lg:col-span-2 flex flex-col justify-between shadow-sm">
-          <div>
-            <div className="flex justify-between items-center mb-1">
-              <h2 className="text-base font-bold text-zinc-800 tracking-tight">Dukungan Terbaru</h2>
-              <span className="text-xs text-indigo-650 font-semibold flex items-center gap-1">
-                <UserCheck className="w-3.5 h-3.5" />
-                Real-Time Feed
-              </span>
-            </div>
-            <p className="text-xs text-zinc-500 mb-6">
-              Arus masuk pembayaran sukarela pengguna.
-            </p>
+        <div className="glass-panel-light p-6 rounded-2xl lg:col-span-2 space-y-4 shadow-sm bg-white border border-zinc-200">
+          <div className="flex justify-between items-center">
+            <h2 className="text-base font-bold text-zinc-800 tracking-tight">Aktivitas Terkini</h2>
+            <Link href="/transactions" className="text-xs text-emerald-600 hover:underline font-semibold">
+              Lihat Semua
+            </Link>
+          </div>
 
-            <div className="space-y-4">
-              {recentActivities.length > 0 ? (
-                recentActivities.map((tx, idx) => {
-                  const txDate = new Date(tx.createdAt);
-                  const formattedTime = txDate.toLocaleDateString("id-ID", {
-                    day: "numeric",
-                    month: "short",
-                    hour: "2-digit",
-                    minute: "2-digit"
-                  });
+          <div className="divide-y divide-zinc-100">
+            {recentActivities.map((tx) => {
+              const statusColor = 
+                tx.status === "Success" ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20" :
+                tx.status === "Pending" ? "bg-amber-500/10 text-amber-600 border-amber-500/20" :
+                "bg-red-500/10 text-red-600 border-red-500/20";
 
-                  return (
-                    <div key={tx.id} className="flex items-start gap-3 p-3 rounded-xl bg-zinc-50 border border-zinc-150/60 group hover:bg-zinc-100/70 transition-colors">
-                      <div className="w-8 h-8 rounded-lg bg-emerald-50 border border-emerald-250 text-emerald-600 font-bold text-xs flex items-center justify-center shrink-0">
-                        ☕
-                      </div>
-                      <div className="min-w-0 flex-1 space-y-0.5">
-                        <div className="flex justify-between items-start">
-                          <p className="text-xs font-bold text-zinc-800 truncate">{tx.userName}</p>
-                          <span className="text-[10px] text-zinc-650 font-bold shrink-0">{formatIDR(tx.amount)}</span>
-                        </div>
-                        <p className="text-[10px] text-zinc-500 truncate">{tx.userEmail}</p>
-                        <p className="text-[9px] text-zinc-400 font-semibold">{formattedTime} • ID: {tx.id}</p>
-                      </div>
-                    </div>
-                  );
-                })
-              ) : (
-                <div className="text-center py-12 text-xs text-zinc-500 font-medium">
-                  Tidak ada transaksi (Database Kosong)
+              return (
+                <div key={tx.id} className="py-3.5 flex items-center justify-between gap-3">
+                  <div className="space-y-0.5">
+                    <p className="text-xs font-bold text-zinc-800 line-clamp-1">{tx.userName}</p>
+                    <p className="text-[11px] text-zinc-400">{tx.name || tx.productId}</p>
+                  </div>
+                  <div className="text-right space-y-1">
+                    <p className="text-xs font-extrabold text-zinc-900 font-display">{formatIDR(tx.amount)}</p>
+                    <span className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-bold border uppercase tracking-wider ${statusColor}`}>
+                      {tx.status}
+                    </span>
+                  </div>
                 </div>
-              )}
-            </div>
+              );
+            })}
           </div>
         </div>
       </div>

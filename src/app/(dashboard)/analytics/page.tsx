@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from "react";
 import { useApp } from "@/context/AppContext";
+import { analyticsApi } from "@/utils/api";
 import { 
   ResponsiveContainer, 
   LineChart, 
@@ -15,7 +16,6 @@ import {
   PieChart, 
   Pie, 
   Cell, 
-  Legend 
 } from "recharts";
 import { 
   TrendingUp, 
@@ -24,17 +24,52 @@ import {
   Calendar,
   AlertCircle,
   Tag,
-  CircleDollarSign,
   Briefcase
 } from "lucide-react";
 
 export default function AnalyticsPage() {
   const { transactions } = useApp();
   const [isMounted, setIsMounted] = useState(false);
+  const [backendMonthly, setBackendMonthly] = useState<Array<{
+    month: string;
+    year: number;
+    totalSupport: number;
+    totalCount: number;
+  }> | null>(null);
+
+  const [backendProducts, setBackendProducts] = useState<Array<{
+    productId: string;
+    label: string;
+    count: number;
+    sum: number;
+  }> | null>(null);
+
+  const [backendStatus, setBackendStatus] = useState<Array<{
+    status: string;
+    count: number;
+    percentage: number;
+  }> | null>(null);
 
   useEffect(() => {
     setIsMounted(true);
-  }, []);
+    analyticsApi.getMonthlyTrends().then(res => {
+      if (res.success && res.data && res.data.length > 0) {
+        setBackendMonthly(res.data);
+      }
+    }).catch(() => {});
+
+    analyticsApi.getProductStats().then(res => {
+      if (res.success && res.data && res.data.length > 0) {
+        setBackendProducts(res.data);
+      }
+    }).catch(() => {});
+
+    analyticsApi.getStatusDistribution().then(res => {
+      if (res.success && res.data && res.data.length > 0) {
+        setBackendStatus(res.data);
+      }
+    }).catch(() => {});
+  }, [transactions]);
 
   // Format currency helper
   const formatIDR = (num: number) => {
@@ -46,16 +81,24 @@ export default function AnalyticsPage() {
     }).format(num);
   };
 
-  // 1. Monthly Successful Support Trend (Jan-Dec 2026)
+  // 1. Monthly Successful Support Trend
   const monthlyData = useMemo(() => {
+    if (backendMonthly && backendMonthly.length > 0) {
+      return backendMonthly.map(item => ({
+        name: `${item.month} ${item.year}`,
+        "Total Nominal": item.totalSupport,
+      }));
+    }
+
     const months = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
     const counts = Array(12).fill(0);
+    const currentYear = new Date().getFullYear();
     
     transactions
       .filter(tx => tx.status === "Success")
       .forEach(tx => {
         const date = new Date(tx.createdAt);
-        if (date.getFullYear() === 2026) {
+        if (!isNaN(date.getTime()) && date.getFullYear() === currentYear) {
           counts[date.getMonth()] += tx.amount;
         }
       });
@@ -64,39 +107,53 @@ export default function AnalyticsPage() {
       name: m,
       "Total Nominal": counts[idx],
     }));
-  }, [transactions]);
+  }, [backendMonthly, transactions]);
 
-  // 2. Product Distribution Count (Rp10k, Rp25k, Rp50k, Rp100k)
+  // 2. Product Distribution Count
   const productData = useMemo(() => {
-    const counts = {
-      "Rp10.000": 0,
-      "Rp25.000": 0,
-      "Rp50.000": 0,
-      "Rp100.000": 0
-    };
-    
+    if (backendProducts && backendProducts.length > 0) {
+      return backendProducts.map(p => ({
+        name: p.label,
+        "Jumlah Transaksi": p.count,
+      }));
+    }
+
+    const map = new Map<string, number>();
     transactions
       .filter(tx => tx.status === "Success")
       .forEach(tx => {
-        if (tx.amount === 10000) counts["Rp10.000"]++;
-        else if (tx.amount === 25000) counts["Rp25.000"]++;
-        else if (tx.amount === 50000) counts["Rp50.000"]++;
-        else if (tx.amount === 100000) counts["Rp100.000"]++;
+        const label = tx.name || tx.productId;
+        map.set(label, (map.get(label) || 0) + 1);
       });
-      
-    return Object.entries(counts).map(([name, count]) => ({
+
+    return Array.from(map.entries()).map(([name, count]) => ({
       name,
-      "Jumlah Transaksi": count
+      "Jumlah Transaksi": count,
     }));
-  }, [transactions]);
+  }, [backendProducts, transactions]);
 
   // 3. Status outcomes proportion
   const statusData = useMemo(() => {
-    const counts = {
+    if (backendStatus && backendStatus.length > 0) {
+      const colorMap: Record<string, string> = {
+        Success: "#10b981",
+        Pending: "#f5a623",
+        Failed: "#ef4444",
+        Cancelled: "#71717a",
+      };
+
+      return backendStatus.map(s => ({
+        name: s.status,
+        value: s.count,
+        color: colorMap[s.status] || "#6366f1",
+      }));
+    }
+
+    const counts: Record<string, number> = {
       Success: 0,
       Pending: 0,
       Failed: 0,
-      Cancelled: 0
+      Cancelled: 0,
     };
     
     transactions.forEach(tx => {
@@ -109,34 +166,38 @@ export default function AnalyticsPage() {
       { name: "Success", value: counts.Success, color: "#10b981" },
       { name: "Pending", value: counts.Pending, color: "#f5a623" },
       { name: "Failed", value: counts.Failed, color: "#ef4444" },
-      { name: "Cancelled", value: counts.Cancelled, color: "#71717a" }
+      { name: "Cancelled", value: counts.Cancelled, color: "#71717a" },
     ];
-  }, [transactions]);
+  }, [backendStatus, transactions]);
 
   // 4. Product Statistics Details Table Data
   const productStatsTable = useMemo(() => {
-    const stats = {
-      support_10000: { name: "Dukungan Rp10.000", count: 0, total: 0 },
-      support_25000: { name: "Dukungan Rp25.000", count: 0, total: 0 },
-      support_50000: { name: "Dukungan Rp50.000", count: 0, total: 0 },
-      support_100000: { name: "Dukungan Rp100.000", count: 0, total: 0 },
-    };
+    if (backendProducts && backendProducts.length > 0) {
+      return backendProducts.map(p => ({
+        id: p.productId,
+        name: p.label,
+        count: p.count,
+        total: p.sum,
+      }));
+    }
 
+    const stats: Record<string, { name: string; count: number; total: number }> = {};
     transactions
       .filter(tx => tx.status === "Success")
       .forEach(tx => {
-        if (tx.productId in stats) {
-          const key = tx.productId as keyof typeof stats;
-          stats[key].count++;
-          stats[key].total += tx.amount;
+        const id = tx.productId || "unknown";
+        if (!stats[id]) {
+          stats[id] = { name: tx.name || id, count: 0, total: 0 };
         }
+        stats[id].count++;
+        stats[id].total += tx.amount;
       });
 
     return Object.entries(stats).map(([id, val]) => ({
       id,
-      ...val
+      ...val,
     }));
-  }, [transactions]);
+  }, [backendProducts, transactions]);
 
   // Render placeholder if component is rendering on server
   if (!isMounted) {
@@ -151,7 +212,7 @@ export default function AnalyticsPage() {
     );
   }
 
-  const hasData = transactions.length > 0;
+  const hasData = transactions.length > 0 || (backendMonthly && backendMonthly.length > 0);
 
   return (
     <div className="space-y-8 animate-scale-in">
@@ -161,16 +222,16 @@ export default function AnalyticsPage() {
           Analisis Grafik & Performa
         </h1>
         <p className="text-sm text-zinc-500 mt-1">
-          Visualisasi grafis tren nominal bulanan, segmentasi distribusi produk billing, dan proporsi rasio penyelesaian transaksi.
+          Visualisasi grafis tren nominal pendapatan, segmentasi paket langganan, dan proporsi rasio penyelesaian transaksi.
         </p>
       </div>
 
       {!hasData && (
-        <div className="glass-panel-light p-8 rounded-2xl text-center space-y-3">
+        <div className="glass-panel-light p-8 rounded-2xl text-center space-y-3 bg-white border border-zinc-200">
           <AlertCircle className="w-12 h-12 text-zinc-400 mx-auto" />
           <h2 className="text-lg font-bold text-zinc-800">Tidak Ada Data Transaksi</h2>
           <p className="text-xs text-zinc-500 max-w-sm mx-auto">
-            Data transaksi dari database live akan muncul di sini secara otomatis.
+            Data transaksi dari database live akan muncul di sini secara otomatis setelah transaksi pertama terproses.
           </p>
         </div>
       )}
@@ -180,14 +241,14 @@ export default function AnalyticsPage() {
           {/* Charts Grid */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Monthly Support Trend Line Chart */}
-            <div className="glass-panel-light p-6 rounded-2xl space-y-4 shadow-sm">
+            <div className="glass-panel-light p-6 rounded-2xl space-y-4 shadow-sm bg-white border border-zinc-200">
               <div className="flex justify-between items-center">
                 <div>
                   <h2 className="text-base font-bold text-zinc-800 flex items-center gap-2 tracking-tight">
                     <TrendingUp className="w-4 h-4 text-emerald-600" />
-                    Tren Nominal Dukungan Bulanan
+                    Tren Nominal Pendapatan Bulanan
                   </h2>
-                  <p className="text-xs text-zinc-500 mt-0.5">Akumulasi dukungan sukses per bulan di tahun 2026</p>
+                  <p className="text-xs text-zinc-500 mt-0.5">Akumulasi pembayaran sukses per bulan</p>
                 </div>
                 <Calendar className="w-4 h-4 text-zinc-400" />
               </div>
@@ -206,7 +267,7 @@ export default function AnalyticsPage() {
                       stroke="#71717a" 
                       tickLine={false} 
                       axisLine={false}
-                      tickFormatter={(v) => `Rp${(v / 1000000).toFixed(1)}M`} 
+                      tickFormatter={(v) => `Rp${(v / 1000).toFixed(0)}k`} 
                     />
                     <Tooltip 
                       contentStyle={{ backgroundColor: "#ffffff", borderColor: "#e4e4e7", borderRadius: "12px" }}
@@ -227,14 +288,14 @@ export default function AnalyticsPage() {
             </div>
 
             {/* Popular Nominal Distribution Bar Chart */}
-            <div className="glass-panel-light p-6 rounded-2xl space-y-4 shadow-sm">
+            <div className="glass-panel-light p-6 rounded-2xl space-y-4 shadow-sm bg-white border border-zinc-200">
               <div className="flex justify-between items-center">
                 <div>
                   <h2 className="text-base font-bold text-zinc-800 flex items-center gap-2 tracking-tight">
                     <BarChart3 className="w-4 h-4 text-indigo-650" />
-                    Distribusi Nominal Terpopuler
+                    Distribusi Paket Terpopuler
                   </h2>
-                  <p className="text-xs text-zinc-500 mt-0.5">Kuantitas transaksi terverifikasi sukses per tingkatan nominal</p>
+                  <p className="text-xs text-zinc-500 mt-0.5">Kuantitas transaksi terverifikasi sukses per paket produk</p>
                 </div>
                 <Tag className="w-4 h-4 text-zinc-400" />
               </div>
@@ -251,7 +312,7 @@ export default function AnalyticsPage() {
                     />
                     <Bar dataKey="Jumlah Transaksi" fill="#6366f1" radius={[8, 8, 0, 0]}>
                       {productData.map((entry, index) => {
-                        const colors = ["#10b981", "#3b82f6", "#8b5cf6", "#f5a623"];
+                        const colors = ["#10b981", "#3b82f6", "#8b5cf6", "#f5a623", "#14b8a6"];
                         return <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />;
                       })}
                     </Bar>
@@ -264,20 +325,20 @@ export default function AnalyticsPage() {
           {/* Bottom Row Grid */}
           <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
             {/* Product Stats Audit Table (3 cols) */}
-            <div className="glass-panel-light p-6 rounded-2xl lg:col-span-3 space-y-4 shadow-sm">
+            <div className="glass-panel-light p-6 rounded-2xl lg:col-span-3 space-y-4 shadow-sm bg-white border border-zinc-200">
               <div>
                 <h2 className="text-base font-bold text-zinc-800 flex items-center gap-2 tracking-tight">
                   <Briefcase className="w-4 h-4 text-amber-550" />
-                  Statistik Rinci Produk Billing
+                  Statistik Rinci Paket Billing
                 </h2>
-                <p className="text-xs text-zinc-500 mt-0.5">Analisis konversi dan volume pendapatan per item Google Play Billing</p>
+                <p className="text-xs text-zinc-500 mt-0.5">Analisis konversi dan volume pendapatan per item paket langganan</p>
               </div>
               
               <div className="overflow-x-auto no-scrollbar">
                 <table className="w-full text-left text-xs border-collapse">
                   <thead>
                     <tr className="border-b border-zinc-200 text-[10px] tracking-wider uppercase font-bold text-zinc-500">
-                      <th className="pb-3 pr-4">Produk</th>
+                      <th className="pb-3 pr-4">Paket Langganan</th>
                       <th className="pb-3 text-center px-4">Jumlah Penjualan</th>
                       <th className="pb-3 text-right pl-4">Total Akumulasi</th>
                     </tr>
@@ -303,7 +364,7 @@ export default function AnalyticsPage() {
             </div>
 
             {/* Transaction Outcome Proportion Pie Chart (2 cols) */}
-            <div className="glass-panel-light p-6 rounded-2xl lg:col-span-2 space-y-4 flex flex-col justify-between shadow-sm">
+            <div className="glass-panel-light p-6 rounded-2xl lg:col-span-2 space-y-4 flex flex-col justify-between shadow-sm bg-white border border-zinc-200">
               <div>
                 <h2 className="text-base font-bold text-zinc-800 flex items-center gap-2 tracking-tight">
                   <PieIcon className="w-4 h-4 text-pink-600" />

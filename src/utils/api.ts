@@ -1,4 +1,15 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+export function getApiBaseUrl(): string {
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL;
+  }
+  if (typeof window !== "undefined") {
+    // When running locally in browser, route via Next.js proxy to bypass CORS
+    if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
+      return "/api/proxy";
+    }
+  }
+  return "https://core.gis.terralium.tech/api/v1";
+}
 
 export interface ApiErrorResponse {
   success: false;
@@ -29,6 +40,49 @@ export interface PaginatedApiSuccessResponse<T> {
   };
 }
 
+export interface ProductItem {
+  id: string;
+  title: string;
+  description?: string | null;
+  amount: number;
+  currency: string;
+  billing_period?: string;
+  billingPeriod?: string;
+  trial_days?: number;
+  trialDays?: number;
+  original_amount?: number | null;
+  originalAmount?: number | null;
+  discount_percent?: number;
+  discountPercent?: number;
+  google_play_product_id?: string | null;
+  googlePlayProductId?: string | null;
+  is_active: boolean;
+  isActive: boolean;
+  created_at?: string;
+  createdAt?: string;
+}
+
+export interface AdminUser {
+  id: string;
+  email: string;
+  name: string;
+  role: string;
+  is_active: boolean;
+  isActive?: boolean;
+  created_at: string;
+  createdAt?: string;
+  last_login_at?: string | null;
+  subscription_status?: string;
+  trial_ends_at?: string | null;
+  subscription_ends_at?: string | null;
+  active_plan_id?: string | null;
+  login_type?: string;
+  has_access?: boolean;
+  days_left_in_trial?: number;
+  is_group_member?: boolean;
+  is_email_verified?: boolean;
+}
+
 // Helper to get auth header
 function getAuthHeader(): Record<string, string> {
   if (typeof window !== "undefined") {
@@ -45,7 +99,7 @@ export async function apiFetch<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const url = `${API_BASE_URL}${endpoint}`;
+  const url = `${getApiBaseUrl()}${endpoint}`;
   const headers = {
     "Content-Type": "application/json",
     ...getAuthHeader(),
@@ -92,13 +146,34 @@ export const authApi = {
     return res;
   },
 
+  loginGoogle: async (idToken?: string, email?: string, name?: string) => {
+    const res = await apiFetch<ApiSuccessResponse<{ access_token: string; refresh_token: string }>>(
+      "/auth/google",
+      {
+        method: "POST",
+        body: JSON.stringify({ id_token: idToken, email, name }),
+      }
+    );
+    if (res.data?.access_token) {
+      localStorage.setItem("accessToken", res.data.access_token);
+      localStorage.setItem("refreshToken", res.data.refresh_token);
+      localStorage.setItem("isLoggedIn", "true");
+    }
+    return res;
+  },
+
   getMe: async () => {
-    return await apiFetch<ApiSuccessResponse<{ id: string; email: string; name: string; role: string }>>(
+    return await apiFetch<ApiSuccessResponse<AdminUser>>(
       "/auth/me"
     );
   },
 
   logout: () => {
+    try {
+      apiFetch("/auth/logout", { method: "POST" }).catch(() => {});
+    } catch {
+      // ignore
+    }
     localStorage.removeItem("accessToken");
     localStorage.removeItem("refreshToken");
     localStorage.removeItem("isLoggedIn");
@@ -210,13 +285,13 @@ export const transactionsApi = {
     if (status && status !== "All") query.append("status", status);
     if (productId && productId !== "All") query.append("productId", productId);
 
-    const token = localStorage.getItem("accessToken");
+    const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
     const headers: Record<string, string> = {};
     if (token) {
       headers["Authorization"] = `Bearer ${token}`;
     }
 
-    const response = await fetch(`${API_BASE_URL}/transactions/export?${query.toString()}`, { headers });
+    const response = await fetch(`${getApiBaseUrl()}/transactions/export?${query.toString()}`, { headers });
     if (!response.ok) {
       throw new Error(`Gagal mengunduh file ekspor ${format.toUpperCase()}`);
     }
@@ -235,26 +310,18 @@ export const transactionsApi = {
 
 export const adminsApi = {
   list: async () => {
-    return await apiFetch<ApiSuccessResponse<Array<{
-      id: string;
-      email: string;
-      name: string;
-      role: string;
-      is_active: boolean;
-      created_at: string;
-      last_login_at?: string;
-    }>>>("/admins");
+    return await apiFetch<ApiSuccessResponse<AdminUser[]>>("/admins");
   },
 
   create: async (data: { email: string; name: string; password: string; role: string }) => {
-    return await apiFetch<ApiSuccessResponse<any>>("/admins", {
+    return await apiFetch<ApiSuccessResponse<AdminUser>>("/admins", {
       method: "POST",
       body: JSON.stringify(data),
     });
   },
 
   toggleActive: async (id: string, isActive: boolean) => {
-    return await apiFetch<ApiSuccessResponse<any>>(`/admins/${id}/toggle-active`, {
+    return await apiFetch<ApiSuccessResponse<AdminUser>>(`/admins/${id}/toggle-active`, {
       method: "PATCH",
       body: JSON.stringify({ isActive }),
     });
@@ -263,29 +330,112 @@ export const adminsApi = {
 
 export const productsApi = {
   list: async (activeOnly: boolean = false) => {
-    const qStr = activeOnly ? "?active_only=true" : "";
-    return await apiFetch<ApiSuccessResponse<Array<{
-      id: string;
-      title: string;
-      description?: string;
-      amount: number;
-      currency: string;
-      isActive: boolean;
-      createdAt: string;
-    }>>>(`/products${qStr}`);
+    const res = await apiFetch<ApiSuccessResponse<any[]>>(`/products?active_only=${activeOnly}`);
+    if (res.data && Array.isArray(res.data)) {
+      res.data = res.data.map(p => ({
+        ...p,
+        isActive: p.is_active ?? p.isActive ?? true,
+        is_active: p.is_active ?? p.isActive ?? true,
+        billingPeriod: p.billing_period ?? p.billingPeriod ?? "monthly",
+        billing_period: p.billing_period ?? p.billingPeriod ?? "monthly",
+        trialDays: p.trial_days ?? p.trialDays ?? 7,
+        trial_days: p.trial_days ?? p.trialDays ?? 7,
+        originalAmount: p.original_amount ?? p.originalAmount ?? null,
+        original_amount: p.original_amount ?? p.originalAmount ?? null,
+        discountPercent: p.discount_percent ?? p.discountPercent ?? 0,
+        discount_percent: p.discount_percent ?? p.discountPercent ?? 0,
+        googlePlayProductId: p.google_play_product_id ?? p.googlePlayProductId ?? null,
+        google_play_product_id: p.google_play_product_id ?? p.googlePlayProductId ?? null,
+        createdAt: p.created_at ?? p.createdAt ?? "",
+        created_at: p.created_at ?? p.createdAt ?? "",
+      }));
+    }
+    return res as ApiSuccessResponse<ProductItem[]>;
   },
 
-  create: async (data: { id: string; title: string; description?: string; amount: number; currency?: string; isActive?: boolean }) => {
-    return await apiFetch<ApiSuccessResponse<any>>("/products", {
+  create: async (data: {
+    id: string;
+    title: string;
+    description?: string;
+    amount: number;
+    currency?: string;
+    billing_period?: string;
+    billingPeriod?: string;
+    trial_days?: number;
+    trialDays?: number;
+    original_amount?: number | null;
+    originalAmount?: number | null;
+    discount_percent?: number;
+    discountPercent?: number;
+    google_play_product_id?: string | null;
+    googlePlayProductId?: string | null;
+    is_active?: boolean;
+    isActive?: boolean;
+  }) => {
+    const payload = {
+      id: data.id,
+      title: data.title,
+      description: data.description || "",
+      amount: Number(data.amount),
+      currency: data.currency || "IDR",
+      billing_period: data.billing_period || data.billingPeriod || "monthly",
+      trial_days: data.trial_days ?? data.trialDays ?? 7,
+      original_amount: data.original_amount ?? data.originalAmount ?? null,
+      discount_percent: data.discount_percent ?? data.discountPercent ?? 0,
+      google_play_product_id: data.google_play_product_id ?? data.googlePlayProductId ?? null,
+      is_active: data.is_active ?? data.isActive ?? true,
+    };
+    return await apiFetch<ApiSuccessResponse<ProductItem>>("/products", {
       method: "POST",
-      body: JSON.stringify(data),
+      body: JSON.stringify(payload),
     });
   },
 
-  update: async (id: string, data: { title?: string; description?: string; amount?: number; isActive?: boolean }) => {
-    return await apiFetch<ApiSuccessResponse<any>>(`/products/${id}`, {
+  update: async (id: string, data: {
+    title?: string;
+    description?: string;
+    amount?: number;
+    currency?: string;
+    billing_period?: string;
+    billingPeriod?: string;
+    trial_days?: number;
+    trialDays?: number;
+    original_amount?: number | null;
+    originalAmount?: number | null;
+    discount_percent?: number;
+    discountPercent?: number;
+    google_play_product_id?: string | null;
+    googlePlayProductId?: string | null;
+    is_active?: boolean;
+    isActive?: boolean;
+  }) => {
+    const payload: Record<string, any> = {};
+    if (data.title !== undefined) payload.title = data.title;
+    if (data.description !== undefined) payload.description = data.description;
+    if (data.amount !== undefined) payload.amount = Number(data.amount);
+    if (data.currency !== undefined) payload.currency = data.currency;
+    if (data.billing_period !== undefined || data.billingPeriod !== undefined) {
+      payload.billing_period = data.billing_period ?? data.billingPeriod;
+    }
+    if (data.trial_days !== undefined || data.trialDays !== undefined) {
+      payload.trial_days = data.trial_days ?? data.trialDays;
+    }
+    if (data.original_amount !== undefined || data.originalAmount !== undefined) {
+      payload.original_amount = data.original_amount ?? data.originalAmount;
+    }
+    if (data.discount_percent !== undefined || data.discountPercent !== undefined) {
+      payload.discount_percent = data.discount_percent ?? data.discountPercent;
+    }
+    if (data.google_play_product_id !== undefined || data.googlePlayProductId !== undefined) {
+      payload.google_play_product_id = data.google_play_product_id ?? data.googlePlayProductId;
+    }
+    if (data.is_active !== undefined || data.isActive !== undefined) {
+      payload.is_active = data.is_active ?? data.isActive;
+    }
+
+    return await apiFetch<ApiSuccessResponse<ProductItem>>(`/products/${id}`, {
       method: "PUT",
-      body: JSON.stringify(data),
+      body: JSON.stringify(payload),
     });
   },
 

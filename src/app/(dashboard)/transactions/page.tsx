@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { useApp } from "@/context/AppContext";
 import { DonationTransaction } from "@/utils/mockData";
-import { transactionsApi } from "@/utils/api";
+import { transactionsApi, productsApi, ProductItem } from "@/utils/api";
 import { 
   Search, 
   Filter, 
@@ -41,9 +41,18 @@ export default function TransactionsPage() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [productsCatalog, setProductsCatalog] = useState<ProductItem[]>([]);
 
   const isSuperadmin = userRole?.toLowerCase() === "superadmin";
   const itemsPerPage = 10;
+
+  useEffect(() => {
+    productsApi.list(false).then((res) => {
+      if (res.success && res.data) {
+        setProductsCatalog(res.data);
+      }
+    }).catch(() => {});
+  }, []);
 
   // Format currency helper
   const formatIDR = (num: number) => {
@@ -55,13 +64,40 @@ export default function TransactionsPage() {
     }).format(num);
   };
 
+  // Filter options: Combine catalog products with any unique product IDs in transactions
+  const productOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    // Default subscription products
+    map.set("terragis_sub_monthly", "Paket Perbulan");
+    map.set("terragis_sub_yearly", "Paket Pertahun");
+    map.set("terragis_sub_lifetime", "Paket Selamanya");
+    map.set("terragis_sub_group", "Paket Bersama (Team)");
+    map.set("terragis_sub_trial", "Uji Coba Gratis");
+
+    // Override or add from fetched catalog
+    productsCatalog.forEach(p => {
+      map.set(p.id, p.title);
+    });
+
+    // Add any missing from transactions
+    transactions.forEach(tx => {
+      if (tx.productId && !map.has(tx.productId)) {
+        map.set(tx.productId, tx.name || tx.productId);
+      }
+    });
+
+    return Array.from(map.entries()).map(([id, label]) => ({ id, label }));
+  }, [productsCatalog, transactions]);
+
   // Filtered dataset
   const filteredTransactions = useMemo(() => {
     return transactions.filter(tx => {
+      const q = search.toLowerCase();
       const matchesSearch = 
-        tx.id.toLowerCase().includes(search.toLowerCase()) ||
-        tx.userName.toLowerCase().includes(search.toLowerCase()) ||
-        tx.userEmail.toLowerCase().includes(search.toLowerCase());
+        tx.id.toLowerCase().includes(q) ||
+        tx.userName.toLowerCase().includes(q) ||
+        tx.userEmail.toLowerCase().includes(q) ||
+        (tx.name && tx.name.toLowerCase().includes(q));
         
       const matchesStatus = statusFilter === "All" || tx.status === statusFilter;
       const matchesProduct = productFilter === "All" || tx.productId === productFilter;
@@ -71,7 +107,7 @@ export default function TransactionsPage() {
   }, [transactions, search, statusFilter, productFilter]);
 
   // Reset page when filters change
-  React.useEffect(() => {
+  useEffect(() => {
     setCurrentPage(1);
   }, [search, statusFilter, productFilter]);
 
@@ -179,10 +215,10 @@ export default function TransactionsPage() {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-extrabold tracking-tight text-zinc-900 font-display">
-            Catatan Transaksi Dukungan
+            Catatan Transaksi Langganan
           </h1>
           <p className="text-sm text-zinc-500 mt-1">
-            Gunakan filter dan kolom pencarian untuk menyaring logs pembayaran. Klik baris tabel untuk melihat detail audit.
+            Riwayat pembayaran langganan pengguna dari aplikasi mobile.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -227,14 +263,14 @@ export default function TransactionsPage() {
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Cari ID, nama, atau email..."
+            placeholder="Cari ID, pengguna, atau email..."
             className="w-full bg-white border border-zinc-200 rounded-xl pl-10 pr-4 py-2.5 text-xs text-zinc-800 placeholder-zinc-400 focus:outline-none focus:border-emerald-500/50 transition-colors focus:ring-1 focus:ring-emerald-500/25"
           />
           <Search className="absolute left-3.5 top-3 w-4 h-4 text-zinc-400" />
           {search && (
             <button 
               onClick={() => setSearch("")} 
-              className="absolute right-3.5 top-3.5 text-zinc-400 hover:text-zinc-650"
+              className="absolute right-3.5 top-3.5 text-zinc-400 hover:text-zinc-650 cursor-pointer"
             >
               <X className="w-3 h-3" />
             </button>
@@ -268,11 +304,12 @@ export default function TransactionsPage() {
               onChange={(e) => setProductFilter(e.target.value)}
               className="bg-transparent text-xs text-zinc-650 focus:outline-none pr-2 cursor-pointer font-medium"
             >
-              <option className="text-zinc-800" value="All">Semua Produk</option>
-              <option className="text-zinc-800" value="support_10000">Dukungan Rp10.000</option>
-              <option className="text-zinc-800" value="support_25000">Dukungan Rp25.000</option>
-              <option className="text-zinc-800" value="support_50000">Dukungan Rp50.000</option>
-              <option className="text-zinc-800" value="support_100000">Dukungan Rp100.000</option>
+              <option className="text-zinc-800" value="All">Semua Paket</option>
+              {productOptions.map(p => (
+                <option key={p.id} className="text-zinc-800" value={p.id}>
+                  {p.label}
+                </option>
+              ))}
             </select>
           </div>
         </div>
@@ -286,7 +323,7 @@ export default function TransactionsPage() {
               <tr className="border-b border-zinc-200 bg-zinc-50/50 text-[10px] tracking-wider uppercase font-bold text-zinc-500">
                 <th className="py-4 px-6">ID / Tanggal</th>
                 <th className="py-4 px-6">Pengguna</th>
-                <th className="py-4 px-6">Produk Billing</th>
+                <th className="py-4 px-6">Paket Langganan</th>
                 <th className="py-4 px-6 text-right">Nominal</th>
                 <th className="py-4 px-6 text-center">Status</th>
               </tr>
@@ -295,7 +332,7 @@ export default function TransactionsPage() {
               {paginatedTransactions.length > 0 ? (
                 paginatedTransactions.map((tx) => {
                   const txDate = new Date(tx.createdAt);
-                  const dateString = txDate.toLocaleDateString("id-ID", {
+                  const dateString = isNaN(txDate.getTime()) ? tx.createdAt : txDate.toLocaleDateString("id-ID", {
                     day: "numeric",
                     month: "short",
                     year: "numeric",
@@ -311,7 +348,7 @@ export default function TransactionsPage() {
                     >
                       <td className="py-4 px-6">
                         <div className="space-y-0.5">
-                          <span className="font-bold text-zinc-800 group-hover:text-emerald-600 transition-colors flex items-center gap-1">
+                          <span className="font-bold text-zinc-800 group-hover:text-emerald-600 transition-colors flex items-center gap-1 font-mono text-[11px]">
                             {tx.id}
                             <ExternalLink className="w-2.5 h-2.5 opacity-0 group-hover:opacity-100 transition-opacity" />
                           </span>
@@ -326,10 +363,13 @@ export default function TransactionsPage() {
                           </span>
                         </div>
                       </td>
-                      <td className="py-4 px-6 font-medium text-zinc-600">
-                        {tx.name}
+                      <td className="py-4 px-6 font-medium text-zinc-700">
+                        <div className="flex flex-col">
+                          <span>{tx.name || tx.productId}</span>
+                          <span className="text-[10px] text-zinc-400 font-mono">{tx.productId}</span>
+                        </div>
                       </td>
-                      <td className="py-4 px-6 text-right font-extrabold text-zinc-900">
+                      <td className="py-4 px-6 text-right font-extrabold text-zinc-900 font-display">
                         {formatIDR(tx.amount)}
                       </td>
                       <td className="py-4 px-6 text-center">
@@ -387,13 +427,13 @@ export default function TransactionsPage() {
           />
 
           {/* Drawer container */}
-          <div className="fixed right-0 top-0 h-full w-full max-w-sm bg-white border-l border-zinc-250 z-50 p-6 flex flex-col justify-between shadow-2xl animate-scale-in text-zinc-800">
+          <div className="fixed right-0 top-0 h-full w-full max-w-sm bg-white border-l border-zinc-250 z-50 p-6 flex flex-col justify-between shadow-2xl animate-scale-in text-zinc-800 overflow-y-auto">
             <div className="space-y-6">
               {/* Drawer Header */}
               <div className="flex justify-between items-center pb-4 border-b border-zinc-200">
                 <div>
                   <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">Detail Audit Transaksi</h3>
-                  <h2 className="text-lg font-extrabold text-zinc-900 mt-0.5">{selectedTx.id}</h2>
+                  <h2 className="text-base font-extrabold text-zinc-900 mt-0.5 font-mono">{selectedTx.id}</h2>
                 </div>
                 <button
                   onClick={() => setSelectedTx(null)}
@@ -408,7 +448,7 @@ export default function TransactionsPage() {
                 <div className="absolute top-0 right-0 p-3 text-zinc-200/50 pointer-events-none">
                   <CreditCard className="w-16 h-16" />
                 </div>
-                <span className="text-[9px] font-bold text-zinc-450 tracking-widest uppercase">JUMLAH DUKUNGAN</span>
+                <span className="text-[9px] font-bold text-zinc-450 tracking-widest uppercase">NOMINAL TRANSAKSI</span>
                 <p className="text-2xl font-black text-zinc-900 font-display">{formatIDR(selectedTx.amount)}</p>
                 <div className="pt-2 flex items-center justify-between">
                   <span className="text-[10px] text-zinc-500 font-semibold">Status Pembayaran:</span>
@@ -451,60 +491,67 @@ export default function TransactionsPage() {
                 </div>
               </div>
 
-              {/* Data Audit List */}
+              {/* Metadata Fields */}
               <div className="space-y-4 text-xs">
-                {/* User Details */}
-                <div className="space-y-2">
-                  <span className="block text-[10px] font-bold tracking-widest text-zinc-400 uppercase">IDENTITAS PENGGUNA</span>
-                  <div className="space-y-2.5 bg-zinc-50 p-3 rounded-lg border border-zinc-200">
-                    <div className="flex items-center gap-2.5">
-                      <User className="w-3.5 h-3.5 text-zinc-400" />
-                      <span className="font-semibold text-zinc-700">{selectedTx.userName}</span>
-                    </div>
-                    <div className="flex items-center gap-2.5">
-                      <Mail className="w-3.5 h-3.5 text-zinc-400" />
-                      <span className="text-zinc-650 font-medium select-all truncate">{selectedTx.userEmail}</span>
-                    </div>
-                  </div>
+                <div>
+                  <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider block mb-1 flex items-center gap-1">
+                    <User className="w-3 h-3 text-zinc-400" />
+                    Nama Pengguna
+                  </span>
+                  <p className="font-semibold text-zinc-800">{selectedTx.userName}</p>
                 </div>
 
-                {/* Billing Details */}
-                <div className="space-y-2">
-                  <span className="block text-[10px] font-bold tracking-widest text-zinc-400 uppercase">METADATA GOOGLE PLAY</span>
-                  <div className="space-y-2.5 bg-zinc-50 p-3 rounded-lg border border-zinc-200">
-                    <div className="flex justify-between animate-fade-in">
-                      <span className="text-zinc-500 font-medium flex items-center gap-1.5"><Tag className="w-3 h-3" /> Product ID:</span>
-                      <code className="text-[10px] bg-white px-1.5 py-0.5 rounded border border-zinc-200 text-emerald-600 font-mono">{selectedTx.productId}</code>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-zinc-500 font-medium flex items-center gap-1.5"><Calendar className="w-3 h-3" /> Waktu Transaksi:</span>
-                      <span className="text-zinc-700 font-semibold">{new Date(selectedTx.createdAt).toLocaleString("id-ID")}</span>
-                    </div>
-                  </div>
+                <div>
+                  <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider block mb-1 flex items-center gap-1">
+                    <Mail className="w-3 h-3 text-zinc-400" />
+                    Email
+                  </span>
+                  <p className="font-medium text-zinc-700 select-all">{selectedTx.userEmail}</p>
+                </div>
+
+                <div>
+                  <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider block mb-1 flex items-center gap-1">
+                    <Tag className="w-3 h-3 text-zinc-400" />
+                    Paket Langganan
+                  </span>
+                  <p className="font-semibold text-zinc-800">{selectedTx.name || selectedTx.productId}</p>
+                  <p className="text-[10px] font-mono text-zinc-400">{selectedTx.productId}</p>
+                </div>
+
+                <div>
+                  <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider block mb-1 flex items-center gap-1">
+                    <Calendar className="w-3 h-3 text-zinc-400" />
+                    Waktu Transaksi
+                  </span>
+                  <p className="font-medium text-zinc-700">
+                    {new Date(selectedTx.createdAt).toLocaleString("id-ID", {
+                      timeZone: "Asia/Jakarta",
+                      dateStyle: "full",
+                      timeStyle: "medium"
+                    })}
+                  </p>
                 </div>
               </div>
             </div>
 
-            {/* Actions Block */}
-            <div className="pt-4 border-t border-zinc-200 space-y-2">
-              <a
-                href={`mailto:${selectedTx.userEmail}`}
-                className="w-full py-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-white font-semibold text-xs transition-colors flex items-center justify-center gap-2"
-              >
-                Kirim Email Konfirmasi
-              </a>
-
-              {/* Superadmin Delete Button */}
+            {/* Bottom Actions */}
+            <div className="pt-6 border-t border-zinc-200 mt-6 space-y-2">
               {isSuperadmin && (
                 <button
                   onClick={() => handleDeleteTransaction(selectedTx.id)}
                   disabled={isDeleting}
-                  className="w-full py-2 rounded-lg bg-red-50 hover:bg-red-100 border border-red-200 text-red-600 font-semibold text-xs transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                  className="w-full flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-red-50 hover:bg-red-100 text-red-600 text-xs font-semibold border border-red-200/60 transition-colors cursor-pointer disabled:opacity-50"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
-                  {isDeleting ? "Menghapus..." : "Hapus Transaksi (Superadmin Only)"}
+                  {isDeleting ? "Menghapus..." : "Hapus Transaksi (Permanen)"}
                 </button>
               )}
+              <button
+                onClick={() => setSelectedTx(null)}
+                className="w-full py-2.5 rounded-xl border border-zinc-200 hover:bg-zinc-50 text-zinc-700 text-xs font-semibold transition-colors cursor-pointer"
+              >
+                Tutup Detail
+              </button>
             </div>
           </div>
         </>
