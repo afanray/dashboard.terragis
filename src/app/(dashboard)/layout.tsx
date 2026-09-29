@@ -8,6 +8,7 @@ import {
   Globe, 
   LayoutDashboard, 
   Receipt, 
+  UserCheck,
   TrendingUp, 
   Package,
   LogOut, 
@@ -43,6 +44,8 @@ export default function DashboardLayout({
         return "Ringkasan Dashboard";
       case "/transactions":
         return "Catatan Transaksi";
+      case "/subscriptions":
+        return "Langganan Pengguna (User Subscriptions)";
       case "/analytics":
         return "Analisis Grafik";
       case "/produk":
@@ -58,6 +61,7 @@ export default function DashboardLayout({
   const navItems = [
     { href: "/", label: "Ringkasan", icon: LayoutDashboard },
     { href: "/transactions", label: "Transaksi", icon: Receipt },
+    { href: "/subscriptions", label: "Langganan User", icon: UserCheck },
     { href: "/analytics", label: "Analisis", icon: TrendingUp },
     ...(isSuperadmin ? [
       { href: "/produk", label: "Produk Billing", icon: Package },
