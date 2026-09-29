@@ -163,12 +163,43 @@ export default function SubscriptionsPage() {
     return diffDays;
   };
 
+  // Effective Status calculation
+  const getEffectiveStatus = (status: string, endDateStr?: string | null) => {
+    const s = (status || "").toLowerCase();
+    if (s === "active" && endDateStr) {
+      const end = new Date(endDateStr).getTime();
+      if (end <= Date.now()) {
+        return "expired";
+      }
+    }
+    return s;
+  };
+
+  // Synchronized KPI Stats calculation
+  const effectiveStats = useMemo(() => {
+    let active = stats.active;
+    let expired = stats.expired;
+    let queued = stats.queued;
+    let cancelled = stats.cancelled;
+    let total = stats.total;
+
+    if (subscriptions.length > 0) {
+      const localExpired = subscriptions.filter(s => getEffectiveStatus(s.status, s.end_date || s.endDate) === "expired").length;
+      if (localExpired > expired) {
+        expired = localExpired;
+        active = Math.max(0, total - expired - queued - cancelled);
+      }
+    }
+
+    return { total, active, queued, expired, cancelled };
+  }, [stats, subscriptions]);
+
   // Status Badge Component
   const renderStatusBadge = (status: string, endDateStr?: string | null) => {
-    const s = (status || "").toLowerCase();
+    const effStatus = getEffectiveStatus(status, endDateStr);
     const daysLeft = getRemainingDays(endDateStr);
 
-    if (s === "active") {
+    if (effStatus === "active") {
       return (
         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
@@ -181,7 +212,7 @@ export default function SubscriptionsPage() {
         </span>
       );
     }
-    if (s === "queued") {
+    if (effStatus === "queued") {
       return (
         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
           <Clock className="w-3 h-3 text-amber-500" />
@@ -189,7 +220,7 @@ export default function SubscriptionsPage() {
         </span>
       );
     }
-    if (s === "cancelled") {
+    if (effStatus === "cancelled") {
       return (
         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200">
           <XCircle className="w-3 h-3 text-rose-500" />
@@ -204,6 +235,7 @@ export default function SubscriptionsPage() {
       </span>
     );
   };
+
 
   // Billing Period Label & Badge
   const renderPeriodBadge = (period: string) => {
@@ -359,7 +391,7 @@ export default function SubscriptionsPage() {
           </div>
           <div className="mt-3">
             <span className="text-3xl font-extrabold text-zinc-900 tracking-tight font-display">
-              {stats.total.toLocaleString("id-ID")}
+              {effectiveStats.total.toLocaleString("id-ID")}
             </span>
             <p className="text-xs text-zinc-500 mt-1">Akun tercatat dalam sistem</p>
           </div>
@@ -376,7 +408,7 @@ export default function SubscriptionsPage() {
           </div>
           <div className="mt-3">
             <span className="text-3xl font-extrabold text-emerald-600 tracking-tight font-display">
-              {stats.active.toLocaleString("id-ID")}
+              {effectiveStats.active.toLocaleString("id-ID")}
             </span>
             <p className="text-xs text-zinc-500 mt-1">Dapat mengakses layanan Terra GIS</p>
           </div>
@@ -393,7 +425,7 @@ export default function SubscriptionsPage() {
           </div>
           <div className="mt-3">
             <span className="text-3xl font-extrabold text-amber-600 tracking-tight font-display">
-              {stats.queued.toLocaleString("id-ID")}
+              {effectiveStats.queued.toLocaleString("id-ID")}
             </span>
             <p className="text-xs text-zinc-500 mt-1">Aktif setelah paket sekarang selesai</p>
           </div>
@@ -410,12 +442,13 @@ export default function SubscriptionsPage() {
           </div>
           <div className="mt-3">
             <span className="text-3xl font-extrabold text-zinc-700 tracking-tight font-display">
-              {stats.expired.toLocaleString("id-ID")}
+              {effectiveStats.expired.toLocaleString("id-ID")}
             </span>
             <p className="text-xs text-zinc-500 mt-1">Periode aktif telah selesai</p>
           </div>
           <div className="absolute -right-4 -bottom-4 w-20 h-20 bg-rose-500/5 rounded-full blur-xl pointer-events-none" />
         </div>
+
       </div>
 
       {/* Search and Filters Bar */}
@@ -909,7 +942,7 @@ export default function SubscriptionsPage() {
 
                 <div className="flex items-center gap-2">
                   <select
-                    defaultValue={selectedSub.status}
+                    defaultValue={getEffectiveStatus(selectedSub.status, selectedSub.end_date || selectedSub.endDate)}
                     id="statusSelect"
                     className="flex-1 bg-white border border-zinc-300 rounded-xl px-3 py-2 text-xs font-semibold text-zinc-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
                   >
