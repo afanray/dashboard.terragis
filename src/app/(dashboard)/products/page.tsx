@@ -35,9 +35,10 @@ export default function ProductsPage() {
   const [productId, setProductId] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [amount, setAmount] = useState<number | "">(49000);
-  const [originalAmount, setOriginalAmount] = useState<number | "">("");
+  const [normalPrice, setNormalPrice] = useState<number | "">(49000);
   const [discountPercent, setDiscountPercent] = useState<number | "">(0);
+  const [amount, setAmount] = useState<number | "">(49000);
+  const [showManualDiscountPrice, setShowManualDiscountPrice] = useState(false);
   const [billingPeriod, setBillingPeriod] = useState("monthly");
   const [trialDays, setTrialDays] = useState<number | "">(7);
   const [googlePlayProductId, setGooglePlayProductId] = useState("");
@@ -65,6 +66,28 @@ export default function ProductsPage() {
     }).format(num);
   };
 
+  // Menghitung harga diskon (amount yang ditagihkan) secara otomatis
+  const calculateDiscountedPrice = (normal: number, disc: number) => {
+    if (normal <= 0) return 0;
+    if (disc <= 0) return normal;
+    if (disc >= 100) return 0;
+    return Math.round(normal * (1 - disc / 100));
+  };
+
+  const handleNormalPriceChange = (val: number | "") => {
+    setNormalPrice(val);
+    const norm = val === "" ? 0 : Number(val);
+    const disc = discountPercent === "" ? 0 : Number(discountPercent);
+    setAmount(calculateDiscountedPrice(norm, disc));
+  };
+
+  const handleDiscountPercentChange = (val: number | "") => {
+    setDiscountPercent(val);
+    const norm = normalPrice === "" ? 0 : Number(normalPrice);
+    const disc = val === "" ? 0 : Number(val);
+    setAmount(calculateDiscountedPrice(norm, disc));
+  };
+
   const fetchProducts = async () => {
     setIsLoading(true);
     setError("");
@@ -89,9 +112,10 @@ export default function ProductsPage() {
     setProductId("");
     setTitle("");
     setDescription("");
-    setAmount(49000);
-    setOriginalAmount("");
+    setNormalPrice(49000);
     setDiscountPercent(0);
+    setAmount(49000);
+    setShowManualDiscountPrice(false);
     setBillingPeriod("monthly");
     setTrialDays(7);
     setGooglePlayProductId("");
@@ -103,9 +127,13 @@ export default function ProductsPage() {
     setEditingProduct(p);
     setTitle(p.title);
     setDescription(p.description || "");
+    const orig = p.original_amount ?? p.originalAmount;
+    const disc = p.discount_percent ?? p.discountPercent ?? 0;
+    const baseNormal = orig && orig > 0 ? orig : p.amount;
+    setNormalPrice(baseNormal);
+    setDiscountPercent(disc);
     setAmount(p.amount);
-    setOriginalAmount(p.original_amount ?? p.originalAmount ?? "");
-    setDiscountPercent(p.discount_percent ?? p.discountPercent ?? 0);
+    setShowManualDiscountPrice(false);
     setBillingPeriod(p.billing_period ?? p.billingPeriod ?? "monthly");
     setTrialDays(p.trial_days ?? p.trialDays ?? 7);
     setGooglePlayProductId(p.google_play_product_id ?? p.googlePlayProductId ?? "");
@@ -114,7 +142,11 @@ export default function ProductsPage() {
 
   const handleCreateProduct = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!productId.trim() || !title.trim() || amount === "" || amount < 0) return;
+    const norm = normalPrice === "" ? 0 : Number(normalPrice);
+    const disc = discountPercent === "" ? 0 : Number(discountPercent);
+    const finalAmount = amount === "" ? calculateDiscountedPrice(norm, disc) : Number(amount);
+
+    if (!productId.trim() || !title.trim() || norm < 0 || finalAmount < 0) return;
     setIsSubmitting(true);
     setError("");
     try {
@@ -122,12 +154,12 @@ export default function ProductsPage() {
         id: productId.trim(),
         title: title.trim(),
         description: description.trim() || undefined,
-        amount: Number(amount),
+        amount: finalAmount,
         currency: "IDR",
         billing_period: billingPeriod,
         trial_days: Number(trialDays) || 0,
-        original_amount: originalAmount !== "" ? Number(originalAmount) : undefined,
-        discount_percent: Number(discountPercent) || 0,
+        original_amount: norm > 0 ? norm : undefined,
+        discount_percent: disc,
         google_play_product_id: googlePlayProductId.trim() || undefined,
         is_active: isActive,
       });
@@ -143,17 +175,22 @@ export default function ProductsPage() {
   const handleUpdateProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingProduct) return;
+    const norm = normalPrice === "" ? 0 : Number(normalPrice);
+    const disc = discountPercent === "" ? 0 : Number(discountPercent);
+    const finalAmount = amount === "" ? calculateDiscountedPrice(norm, disc) : Number(amount);
+
+    if (!title.trim() || norm < 0 || finalAmount < 0) return;
     setIsSubmitting(true);
     setError("");
     try {
       await productsApi.update(editingProduct.id, {
         title: title.trim(),
         description: description.trim() || undefined,
-        amount: Number(amount),
+        amount: finalAmount,
         billing_period: billingPeriod,
         trial_days: Number(trialDays) || 0,
-        original_amount: originalAmount !== "" ? Number(originalAmount) : undefined,
-        discount_percent: Number(discountPercent) || 0,
+        original_amount: norm > 0 ? norm : undefined,
+        discount_percent: disc,
         google_play_product_id: googlePlayProductId.trim() || undefined,
         is_active: isActive,
       });
@@ -430,42 +467,108 @@ export default function ProductsPage() {
                   />
                 </div>
 
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-semibold text-zinc-700 mb-1">Harga (IDR)</label>
+                    <label className="block text-xs font-semibold text-zinc-700 mb-1">
+                      Harga Normal (IDR) <span className="text-red-500">*</span>
+                    </label>
                     <input
                       type="number"
                       required
                       min={0}
                       step={1000}
-                      value={amount}
-                      onChange={(e) => setAmount(e.target.value === "" ? "" : Number(e.target.value))}
-                      className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-3.5 py-2 text-xs text-zinc-800 focus:outline-none focus:border-emerald-500 focus:bg-white"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-zinc-700 mb-1">Harga Coret (Opsional)</label>
-                    <input
-                      type="number"
-                      min={0}
-                      step={1000}
-                      value={originalAmount}
-                      onChange={(e) => setOriginalAmount(e.target.value === "" ? "" : Number(e.target.value))}
+                      value={normalPrice}
+                      onChange={(e) => handleNormalPriceChange(e.target.value === "" ? "" : Number(e.target.value))}
                       placeholder="misal: 100000"
                       className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-3.5 py-2 text-xs text-zinc-800 focus:outline-none focus:border-emerald-500 focus:bg-white"
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-zinc-700 mb-1">Diskon (%)</label>
-                    <input
-                      type="number"
-                      min={0}
-                      max={100}
-                      value={discountPercent}
-                      onChange={(e) => setDiscountPercent(e.target.value === "" ? "" : Number(e.target.value))}
-                      className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-3.5 py-2 text-xs text-zinc-800 focus:outline-none focus:border-emerald-500 focus:bg-white"
-                    />
+                    <label className="block text-xs font-semibold text-zinc-700 mb-1">
+                      Diskon (%)
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        value={discountPercent}
+                        onChange={(e) => handleDiscountPercentChange(e.target.value === "" ? "" : Number(e.target.value))}
+                        placeholder="0 - 100"
+                        className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-3.5 py-2 text-xs text-zinc-800 focus:outline-none focus:border-emerald-500 focus:bg-white pr-7"
+                      />
+                      <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-zinc-400 font-semibold pointer-events-none">
+                        %
+                      </span>
+                    </div>
                   </div>
+                </div>
+
+                {/* Hasil Perhitungan Harga Diskon Otomatis (Input manual dihide) */}
+                <div className="bg-emerald-50/70 border border-emerald-200/80 rounded-xl p-3.5 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <span className="text-[11px] font-semibold text-emerald-800 flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                        Harga Ditagihkan {Number(discountPercent) > 0 ? "(Setelah Diskon Otomatis)" : "(Harga Normal)"}:
+                      </span>
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-base font-extrabold text-emerald-950 font-display">
+                          {formatIDR(Number(amount) || 0)}
+                        </span>
+                        {Number(discountPercent) > 0 && Number(normalPrice) > (Number(amount) || 0) && (
+                          <span className="text-xs text-zinc-400 line-through">
+                            {formatIDR(Number(normalPrice))}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    {Number(discountPercent) > 0 && (
+                      <div className="text-right">
+                        <span className="text-[11px] font-extrabold text-emerald-700 bg-emerald-100/90 border border-emerald-300/60 px-2 py-0.5 rounded-full inline-block">
+                          Hemat {discountPercent}%
+                        </span>
+                        <span className="text-[10px] text-zinc-500 block mt-0.5 font-medium">
+                          Potongan: {formatIDR(Math.max(0, Number(normalPrice) - (Number(amount) || 0)))}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-between pt-1 border-t border-emerald-100">
+                    <span className="text-[10px] text-emerald-700/80 italic">
+                      {showManualDiscountPrice 
+                        ? "Mode kustomisasi manual aktif. Ubah nilai jika perlu penyesuaian khusus."
+                        : "Harga diskon otomatis dihitung dari persentase & tersimpan ke sistem."}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowManualDiscountPrice(!showManualDiscountPrice)}
+                      className="text-[10px] font-bold text-emerald-700 hover:text-emerald-900 underline cursor-pointer"
+                    >
+                      {showManualDiscountPrice ? "Sembunyikan Input Harga Diskon" : "Tampilkan / Sesuaikan Input Manual"}
+                    </button>
+                  </div>
+
+                  {/* Input Harga Diskon (Hanya tampil jika user sengaja mengklik tampilkan) */}
+                  {showManualDiscountPrice && (
+                    <div className="pt-2">
+                      <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
+                        Harga Diskon / Ditagihkan Manual (IDR)
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        step={1000}
+                        value={amount}
+                        onChange={(e) => setAmount(e.target.value === "" ? "" : Number(e.target.value))}
+                        className="w-full bg-white border border-emerald-300 rounded-xl px-3.5 py-1.5 text-xs text-zinc-800 focus:outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-500"
+                      />
+                      <span className="text-[10px] text-zinc-400 mt-0.5 block">
+                        Perhatian: Mengubah persentase diskon di atas akan otomatis menghitung ulang nilai ini.
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
@@ -580,41 +683,107 @@ export default function ProductsPage() {
                   />
                 </div>
 
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-semibold text-zinc-700 mb-1">Harga (IDR)</label>
+                    <label className="block text-xs font-semibold text-zinc-700 mb-1">
+                      Harga Normal (IDR) <span className="text-red-500">*</span>
+                    </label>
                     <input
                       type="number"
                       required
                       min={0}
                       step={1000}
-                      value={amount}
-                      onChange={(e) => setAmount(e.target.value === "" ? "" : Number(e.target.value))}
+                      value={normalPrice}
+                      onChange={(e) => handleNormalPriceChange(e.target.value === "" ? "" : Number(e.target.value))}
                       className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-3.5 py-2 text-xs text-zinc-800 focus:outline-none focus:border-emerald-500 focus:bg-white"
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-zinc-700 mb-1">Harga Coret (IDR)</label>
-                    <input
-                      type="number"
-                      min={0}
-                      step={1000}
-                      value={originalAmount}
-                      onChange={(e) => setOriginalAmount(e.target.value === "" ? "" : Number(e.target.value))}
-                      className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-3.5 py-2 text-xs text-zinc-800 focus:outline-none focus:border-emerald-500 focus:bg-white"
-                    />
+                    <label className="block text-xs font-semibold text-zinc-700 mb-1">
+                      Diskon (%)
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        value={discountPercent}
+                        onChange={(e) => handleDiscountPercentChange(e.target.value === "" ? "" : Number(e.target.value))}
+                        placeholder="0 - 100"
+                        className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-3.5 py-2 text-xs text-zinc-800 focus:outline-none focus:border-emerald-500 focus:bg-white pr-7"
+                      />
+                      <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-zinc-400 font-semibold pointer-events-none">
+                        %
+                      </span>
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-zinc-700 mb-1">Diskon (%)</label>
-                    <input
-                      type="number"
-                      min={0}
-                      max={100}
-                      value={discountPercent}
-                      onChange={(e) => setDiscountPercent(e.target.value === "" ? "" : Number(e.target.value))}
-                      className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-3.5 py-2 text-xs text-zinc-800 focus:outline-none focus:border-emerald-500 focus:bg-white"
-                    />
+                </div>
+
+                {/* Hasil Perhitungan Harga Diskon Otomatis (Input manual dihide) */}
+                <div className="bg-emerald-50/70 border border-emerald-200/80 rounded-xl p-3.5 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <span className="text-[11px] font-semibold text-emerald-800 flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                        Harga Ditagihkan {Number(discountPercent) > 0 ? "(Setelah Diskon Otomatis)" : "(Harga Normal)"}:
+                      </span>
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-base font-extrabold text-emerald-950 font-display">
+                          {formatIDR(Number(amount) || 0)}
+                        </span>
+                        {Number(discountPercent) > 0 && Number(normalPrice) > (Number(amount) || 0) && (
+                          <span className="text-xs text-zinc-400 line-through">
+                            {formatIDR(Number(normalPrice))}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    {Number(discountPercent) > 0 && (
+                      <div className="text-right">
+                        <span className="text-[11px] font-extrabold text-emerald-700 bg-emerald-100/90 border border-emerald-300/60 px-2 py-0.5 rounded-full inline-block">
+                          Hemat {discountPercent}%
+                        </span>
+                        <span className="text-[10px] text-zinc-500 block mt-0.5 font-medium">
+                          Potongan: {formatIDR(Math.max(0, Number(normalPrice) - (Number(amount) || 0)))}
+                        </span>
+                      </div>
+                    )}
                   </div>
+
+                  <div className="flex items-center justify-between pt-1 border-t border-emerald-100">
+                    <span className="text-[10px] text-emerald-700/80 italic">
+                      {showManualDiscountPrice 
+                        ? "Mode kustomisasi manual aktif. Ubah nilai jika perlu penyesuaian khusus."
+                        : "Harga diskon otomatis dihitung dari persentase & tersimpan ke sistem."}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowManualDiscountPrice(!showManualDiscountPrice)}
+                      className="text-[10px] font-bold text-emerald-700 hover:text-emerald-900 underline cursor-pointer"
+                    >
+                      {showManualDiscountPrice ? "Sembunyikan Input Harga Diskon" : "Tampilkan / Sesuaikan Input Manual"}
+                    </button>
+                  </div>
+
+                  {/* Input Harga Diskon (Hanya tampil jika user sengaja mengklik tampilkan) */}
+                  {showManualDiscountPrice && (
+                    <div className="pt-2">
+                      <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
+                        Harga Diskon / Ditagihkan Manual (IDR)
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        step={1000}
+                        value={amount}
+                        onChange={(e) => setAmount(e.target.value === "" ? "" : Number(e.target.value))}
+                        className="w-full bg-white border border-emerald-300 rounded-xl px-3.5 py-1.5 text-xs text-zinc-800 focus:outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-500"
+                      />
+                      <span className="text-[10px] text-zinc-400 mt-0.5 block">
+                        Perhatian: Mengubah persentase diskon di atas akan otomatis menghitung ulang nilai ini.
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
